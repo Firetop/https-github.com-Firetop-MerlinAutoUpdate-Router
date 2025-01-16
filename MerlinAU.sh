@@ -4,7 +4,7 @@
 #
 # Original Creation Date: 2023-Oct-01 by @ExtremeFiretop.
 # Official Co-Author: @Martinski W. - Date: 2023-Nov-01
-# Last Modified: 2025-Jan-13
+# Last Modified: 2025-Jan-15
 ###################################################################
 set -u
 
@@ -82,14 +82,15 @@ readonly ScriptFNameTag="${ScriptFileName%%.*}"
 readonly ScriptDirNameD="${ScriptFNameTag}.d"
 
 ##----------------------------------------##
-## Modified by Martinski W. [2025-Jan-05] ##
+## Modified by Martinski W. [2025-Jan-15] ##
 ##----------------------------------------##
 readonly ADDONS_PATH="/jffs/addons"
 readonly SCRIPTS_PATH="/jffs/scripts"
 readonly SETTINGS_DIR="${ADDONS_PATH}/$ScriptDirNameD"
 readonly CONFIG_FILE="${SETTINGS_DIR}/custom_settings.txt"
 readonly SCRIPT_VERPATH="${SETTINGS_DIR}/version.txt"
-readonly SHARED_SETTINGS_FILE="/jffs/addons/custom_settings.txt"
+readonly HELPER_JSFILE="${SETTINGS_DIR}/CheckHelper.js"
+readonly SHARED_SETTINGS_FILE="${ADDONS_PATH}/custom_settings.txt"
 readonly SHARED_WEB_DIR="$(readlink /www/user)"
 readonly SCRIPT_WEB_DIR="${SHARED_WEB_DIR}/$SCRIPT_NAME"
 readonly SCRIPT_WEB_ASP_FILE="${SCRIPT_NAME}.asp"
@@ -380,7 +381,7 @@ else
 fi
 
 ##----------------------------------------##
-## Modified by Martinski W. [2025-Jan-11] ##
+## Modified by Martinski W. [2025-Jan-15] ##
 ##----------------------------------------##
 _AcquireLock_()
 {
@@ -409,6 +410,9 @@ _AcquireLock_()
       if [ -s "$LockFilePath" ]
       then
           oldPID="$(head -n1 "$LockFilePath" |  awk -F '|' '{print $1}')"
+          if [ -n "$oldPID" ] && ! pidof "$ScriptFileName" | grep -qow "$oldPID"
+          then sed -i "/^${oldPID}|/d" "$LockFilePath"
+          fi
           lockFileSecs="$(date +%s -r "$LockFilePath")"
           lockTypeFound="$(_FindLockFileTypes_)"
           if [ "$lockTypeReq" != "cliAnyLock" ] && \
@@ -427,8 +431,9 @@ _AcquireLock_()
       if [ "$ageOfLockSecs" -gt "$LockFileMaxAgeSecs" ]
       then
           Say "Stale Lock Found (older than $LockFileMaxAgeSecs secs). Resetting lock file..."
-          if [ -n "$oldPID" ] && kill -EXIT "$oldPID" 2>/dev/null && \
-              pidof "$ScriptFileName" | grep -qow "$oldPID"
+          if [ -n "$oldPID" ] && \
+             pidof "$ScriptFileName" | grep -qow "$oldPID" && \
+             kill -EXIT "$oldPID" 2>/dev/null
           then
               kill -TERM "$oldPID" ; wait "$oldPID"
           fi
@@ -938,6 +943,39 @@ else
     readonly FW_Update_LOG_BASE_DefaultDIR="$ADDONS_PATH"
 fi
 
+##-------------------------------------##
+## Added by Martinski W. [2025-Jan-15] ##
+##-------------------------------------##
+_SetUp_FW_UpdateZIP_DirectoryPaths_()
+{
+   local theDirPath=""
+   if [ $# -eq 1 ] && [ -n "$1" ] && [ -d "$1" ]
+   then
+       theDirPath="$1"
+   else
+       theDirPath="$(Get_Custom_Setting FW_New_Update_ZIP_Directory_Path)"
+   fi
+   FW_ZIP_BASE_DIR="$theDirPath"
+   FW_ZIP_DIR="${FW_ZIP_BASE_DIR}/$FW_ZIP_SUBDIR"
+   FW_ZIP_FPATH="${FW_ZIP_DIR}/${FW_FileName}.zip"
+}
+
+##-------------------------------------##
+## Added by Martinski W. [2025-Jan-15] ##
+##-------------------------------------##
+_SetUp_FW_UpdateLOG_DirectoryPaths_()
+{
+   local theDirPath=""
+   if [ $# -eq 1 ] && [ -n "$1" ] && [ -d "$1" ]
+   then
+       theDirPath="$1"
+   else
+       theDirPath="$(Get_Custom_Setting FW_New_Update_LOG_Directory_Path)"
+   fi
+   FW_LOG_BASE_DIR="$theDirPath"
+   FW_LOG_DIR="${FW_LOG_BASE_DIR}/$FW_LOG_SUBDIR"
+}
+
 ##----------------------------------------##
 ## Modified by Martinski W. [2025-Jan-05] ##
 ##----------------------------------------##
@@ -1111,7 +1149,7 @@ Get_Custom_Setting()
 }
 
 ##----------------------------------------##
-## Modified by Martinski W. [2025-Jan-05] ##
+## Modified by Martinski W. [2025-Jan-15] ##
 ##----------------------------------------##
 Update_Custom_Settings()
 {
@@ -1209,14 +1247,11 @@ Update_Custom_Settings()
             #
             elif [ "$setting_type" = "FW_New_Update_ZIP_Directory_Path" ]
             then
-                FW_ZIP_BASE_DIR="$setting_value"
-                FW_ZIP_DIR="${setting_value}/$FW_ZIP_SUBDIR"
-                FW_ZIP_FPATH="${FW_ZIP_DIR}/${FW_FileName}.zip"
+                _SetUp_FW_UpdateZIP_DirectoryPaths_ "$setting_value"
             #
             elif [ "$setting_type" = "FW_New_Update_LOG_Directory_Path" ]
             then
-                FW_LOG_BASE_DIR="$setting_value"
-                FW_LOG_DIR="${setting_value}/$FW_LOG_SUBDIR"
+                _SetUp_FW_UpdateLOG_DirectoryPaths_ "$setting_value"
             fi
             ;;
         *)
@@ -1277,8 +1312,42 @@ _GetAllNodeSettings_()
     echo "$setting_value"
 }
 
+##-------------------------------------##
+## Added by Martinski W. [2025-Jan-15] ##
+##-------------------------------------##
+_Validate_FW_UpdateLOG_DirectoryPath_()
+{
+   if [ $# -eq 0 ] || [ -z "$1" ] || [ ! -d "$1" ]
+   then return 1 ; fi
+
+   if [ "$1" = "$FW_LOG_DIR" ] || [ "$1" = "$FW_LOG_BASE_DIR" ]
+   then return 0 ; fi
+
+   local newFullDirPath=""  newBaseDirPath="$1"
+
+   if echo "$newBaseDirPath" | grep -qE "/${FW_LOG_SUBDIR}$"
+   then newFullDirPath="$newBaseDirPath"
+   else newFullDirPath="${newBaseDirPath}/$FW_LOG_SUBDIR"
+   fi
+   mkdir -p -m 755 "$newFullDirPath" 2>/dev/null
+   if [ ! -d "$newFullDirPath" ]
+   then
+       printf "\n${REDct}**ERROR**${NOct}: Could NOT create directory [${REDct}${newFullDirPath}${NOct}].\n"
+       _WaitForEnterKey_
+       return 1
+   fi
+   # Move any existing log files to new directory #
+   mv -f "${FW_LOG_DIR}"/*.log "$newFullDirPath" 2>/dev/null
+   # Remove now the obsolete directory path #
+   rm -fr "${FW_LOG_DIR:?}"
+   # Update the log directory paths after validation #
+   Update_Custom_Settings FW_New_Update_LOG_Directory_Path "$newBaseDirPath"
+   Update_Custom_Settings FW_New_Update_LOG_Preferred_Path "$newBaseDirPath"
+   return 0
+}
+
 ##------------------------------------------##
-## Modified by ExtremeFiretop [2024-Jan-24] ##
+## Modified by ExtremeFiretop [2025-Jan-15] ##
 ##------------------------------------------##
 _Set_FW_UpdateLOG_DirectoryPath_()
 {
@@ -1338,32 +1407,74 @@ _Set_FW_UpdateLOG_DirectoryPath_()
    if [ "$newLogBaseDirPath" = "$FW_LOG_BASE_DIR" ] && [ ! -d "$FW_LOG_DIR" ]
    then mkdir -p -m 755 "$FW_LOG_DIR" ; fi
 
-   if [ "$newLogBaseDirPath" != "$FW_LOG_BASE_DIR" ] && [ -d "$newLogBaseDirPath" ]
+   if [ -d "$newLogBaseDirPath" ]
    then
-       if ! echo "$newLogBaseDirPath" | grep -qE "${FW_LOG_SUBDIR}$"
-       then newLogFileDirPath="${newLogBaseDirPath}/$FW_LOG_SUBDIR" ; fi
-       mkdir -p -m 755 "$newLogFileDirPath" 2>/dev/null
-       if [ ! -d "$newLogFileDirPath" ]
-       then
-           printf "\n${REDct}**ERROR**${NOct}: Could NOT create directory [${REDct}${newLogFileDirPath}${NOct}].\n"
-           _WaitForEnterKey_
-           return 1
+       if ! _Validate_FW_UpdateLOG_DirectoryPath_ "$newLogBaseDirPath"
+       then return 1
        fi
-       # Move any existing log files to new directory #
-       mv -f "${FW_LOG_DIR}"/*.log "$newLogFileDirPath" 2>/dev/null
-       # Remove now the obsolete directory path #
-       rm -fr "${FW_LOG_DIR:?}"
-       # Update the log directory path after validation #
-       Update_Custom_Settings FW_New_Update_LOG_Directory_Path "$newLogBaseDirPath"
-       Update_Custom_Settings FW_New_Update_LOG_Preferred_Path "$newLogBaseDirPath"
        echo "The directory path for the log files was updated successfully."
        _WaitForEnterKey_ "$advnMenuReturnPromptStr"
    fi
    return 0
 }
 
+##-------------------------------------##
+## Added by Martinski W. [2025-Jan-15] ##
+##-------------------------------------##
+_Validate_FW_UpdateZIP_DirectoryPath_()
+{
+   if [ $# -eq 0 ] || [ -z "$1" ] ; then return 1 ; fi
+
+   local updateHelperJS=false
+   if [ $# -eq 2 ] && [ "$2" = "true" ]
+   then updateHelperJS=true ; fi
+
+   if [ ! -d "$1" ]
+   then
+       if "$updateHelperJS"
+       then
+           checkErrorMsg="The directory path [$1] was NOT found."
+           _UpdateHelperJSFile_ 0x01 "false" "$checkErrorMsg"
+       fi
+       Say "${REDct}**ERROR**${NOct}: Directory path [${REDct}${1}${NOct}] is NOT found."
+       _WaitForEnterKey_
+       return 1
+   fi
+
+   if [ "$1" = "$FW_ZIP_DIR" ] || [ "$1" = "$FW_ZIP_BASE_DIR" ]
+   then
+       _UpdateHelperJSFile_ 0x01 "true"
+       return 0
+   fi
+
+   local newFullDirPath=""  newBaseDirPath="$1"
+
+   if echo "$newBaseDirPath" | grep -qE "/${FW_ZIP_SUBDIR}$"
+   then newFullDirPath="$newBaseDirPath"
+   else newFullDirPath="${newBaseDirPath}/$FW_ZIP_SUBDIR"
+   fi
+   mkdir -p -m 755 "$newFullDirPath" 2>/dev/null
+   if [ ! -d "$newFullDirPath" ]
+   then
+       if "$updateHelperJS"
+       then
+           checkErrorMsg="The directory path [$newFullDirPath] could NOT be created."
+           _UpdateHelperJSFile_ 0x01 "false" "$checkErrorMsg"
+       fi
+       Say "${REDct}**ERROR**${NOct}: Could NOT create directory [${REDct}${newFullDirPath}${NOct}]"
+       _WaitForEnterKey_
+       return 1
+   fi
+   # Remove now the obsolete directory path #
+   rm -fr "${FW_ZIP_DIR:?}"
+   rm -f "${newFullDirPath}"/*.zip  "${newFullDirPath}"/*.sha256
+   Update_Custom_Settings FW_New_Update_ZIP_Directory_Path "$newBaseDirPath"
+   _UpdateHelperJSFile_ 0x01 "true"
+   return 0
+}
+
 ##----------------------------------------##
-## Modified by Martinski W. [2024-Jul-31] ##
+## Modified by Martinski W. [2025-Jan-15] ##
 ##----------------------------------------##
 _Set_FW_UpdateZIP_DirectoryPath_()
 {
@@ -1431,21 +1542,11 @@ _Set_FW_UpdateZIP_DirectoryPath_()
       fi
    done
 
-   if [ "$newZIP_BaseDirPath" != "$FW_ZIP_BASE_DIR" ] && [ -d "$newZIP_BaseDirPath" ]
+   if [ -d "$newZIP_BaseDirPath" ]
    then
-       if ! echo "$newZIP_BaseDirPath" | grep -qE "${FW_ZIP_SUBDIR}$"
-       then newZIP_FileDirPath="${newZIP_BaseDirPath}/$FW_ZIP_SUBDIR" ; fi
-       mkdir -p -m 755 "$newZIP_FileDirPath" 2>/dev/null
-       if [ ! -d "$newZIP_FileDirPath" ]
-       then
-           printf "\n${REDct}**ERROR**${NOct}: Could NOT create directory [${REDct}${newZIP_FileDirPath}${NOct}].\n"
-           _WaitForEnterKey_
-           return 1
+       if ! _Validate_FW_UpdateZIP_DirectoryPath_ "$newZIP_BaseDirPath"
+       then return 1
        fi
-       # Remove now the obsolete directory path #
-       rm -fr "${FW_ZIP_DIR:?}"
-       rm -f "${newZIP_FileDirPath}"/*.zip  "${newZIP_FileDirPath}"/*.sha256
-       Update_Custom_Settings FW_New_Update_ZIP_Directory_Path "$newZIP_BaseDirPath"
        if "$isGNUtonFW"
        then
            echo "The directory path for the F/W update file was updated successfully." 
@@ -1568,22 +1669,22 @@ fi
 # storage for the ZIP file so that it can be downloaded
 # in a separate directory from the firmware bin file.
 #-----------------------------------------------------------
-FW_BIN_BASE_DIR="/home/root"
-FW_ZIP_BASE_DIR="$(Get_Custom_Setting FW_New_Update_ZIP_Directory_Path)"
-FW_LOG_BASE_DIR="$(Get_Custom_Setting FW_New_Update_LOG_Directory_Path)"
-
 readonly FW_LOG_SUBDIR="${ScriptDirNameD}/logs"
 readonly FW_BIN_SUBDIR="${ScriptDirNameD}/$FW_FileName"
 readonly FW_ZIP_SUBDIR="${ScriptDirNameD}/$FW_FileName"
 
+FW_BIN_BASE_DIR="/home/root"
 FW_BIN_DIR="${FW_BIN_BASE_DIR}/$FW_BIN_SUBDIR"
-FW_LOG_DIR="${FW_LOG_BASE_DIR}/$FW_LOG_SUBDIR"
-FW_ZIP_DIR="${FW_ZIP_BASE_DIR}/$FW_ZIP_SUBDIR"
-FW_ZIP_FPATH="${FW_ZIP_DIR}/${FW_FileName}.zip"
 
-##----------------------------------------------##
-## Added/Modified by Martinski W. [2023-Nov-24] ##
-##----------------------------------------------##
+##----------------------------------------##
+## Modified by Martinski W. [2025-Jan-15] ##
+##----------------------------------------##
+_SetUp_FW_UpdateZIP_DirectoryPaths_
+_SetUp_FW_UpdateLOG_DirectoryPaths_
+
+##----------------------------------------##
+## Modified by Martinski W. [2023-Nov-24] ##
+##----------------------------------------##
 # The built-in F/W hook script file to be used for
 # setting up persistent jobs to run after a reboot.
 readonly hookScriptFName="services-start"
@@ -1955,56 +2056,163 @@ _CreateDirPaths_()
 }
 
 ##----------------------------------------##
-## Modified by Martinski W. [2025-Jan-05] ##
+## Modified by Martinski W. [2025-Jan-15] ##
 ##----------------------------------------##
 _CreateSymLinks_()
 {
    rm -rf "${SCRIPT_WEB_DIR:?}/"* 2>/dev/null
    ln -s "$CONFIG_FILE" "${SCRIPT_WEB_DIR}/config.htm" 2>/dev/null
+   ln -s "$HELPER_JSFILE" "${SCRIPT_WEB_DIR}/CheckHelper.js" 2>/dev/null
+}
+
+##-------------------------------------##
+## Added by Martinski W. [2025-Jan-15] ##
+##-------------------------------------##
+_InitHelperJSFile_()
+{
+   [ -s "$HELPER_JSFILE" ] && return 0 
+   {
+     echo "var externalCheckID = 0x00;"
+     echo "var externalCheckOK = true;"
+     echo "var externalCheckMsg = '';"
+   } > "$HELPER_JSFILE"
+}
+
+##-------------------------------------##
+## Added by Martinski W. [2025-Jan-15] ##
+##-------------------------------------##
+_UpdateHelperJSFile_()
+{
+   if [ $# -lt 2 ] || [ -z "$1" ] || [ -z "$2" ]
+   then return 1; fi
+
+   local extCheckMsg=""
+   if [ $# -eq 3 ] && [ -n "$3" ]
+   then extCheckMsg="$3" ; fi
+
+   {
+     echo "var externalCheckID = ${1};"
+     echo "var externalCheckOK = ${2};"
+     echo "var externalCheckMsg = '${extCheckMsg}';"
+   } > "$HELPER_JSFILE"
+}
+
+##-------------------------------------##
+## Added by Martinski W. [2025-Jan-15] ##
+##-------------------------------------##
+_ActionsAfterNewConfigSettings_()
+{
+   if [ ! -s "${CONFIG_FILE}.bak" ] || \
+      diff -q "$CONFIG_FILE" "${CONFIG_FILE}.bak" >/dev/null 2>&1
+   then return 1 ; fi
+
+   _ConfigOptionChanged_()
+   {
+      if diff "$CONFIG_FILE" "${CONFIG_FILE}.bak" | grep -q "$1"
+      then return 0
+      else return 1
+      fi
+   }
+   local ccNewEmailAddr  ccNewEmailName  newScriptAUpdateVal
+
+   if _ConfigOptionChanged_ "FW_New_Update_EMail_CC_Address="
+   then
+       ccNewEmailAddr="$(Get_Custom_Setting FW_New_Update_EMail_CC_Address)"
+       ccNewEmailName="${ccNewEmailAddr%%@*}"
+       Update_Custom_Settings FW_New_Update_EMail_CC_Name "$ccNewEmailName"
+   fi
+   if _ConfigOptionChanged_ "FW_New_Update_Postponement_Days="
+   then
+       _Calculate_NextRunTime_
+   fi
+   if _ConfigOptionChanged_ "Allow_Script_Auto_Update"
+   then
+       ScriptAutoUpdateSetting="$(Get_Custom_Setting Allow_Script_Auto_Update)"
+       if [ "$ScriptAutoUpdateSetting" = "DISABLED" ]
+       then
+           _DelScriptAutoUpdateHook_
+           _DelScriptAutoUpdateCronJob_
+       elif [ "$ScriptAutoUpdateSetting" = "ENABLED" ]
+       then
+           scriptUpdateCronSched="$(_GetScriptAutoUpdateCronSchedule_)"
+           if _ValidateCronJobSchedule_ "$scriptUpdateCronSched"
+           then
+              _AddScriptAutoUpdateCronJob_ && _AddScriptAutoUpdateHook_
+           fi
+       fi
+   fi
+   if _ConfigOptionChanged_ "CheckChangeLog"
+   then
+       currentChangelogValue="$(Get_Custom_Setting CheckChangeLog)"
+       if [ "$currentChangelogValue" = "DISABLED" ]
+       then
+           Delete_Custom_Settings "FW_New_Update_Changelog_Approval"
+       elif [ "$currentChangelogValue" = "ENABLED" ]
+       then
+           Update_Custom_Settings FW_New_Update_Changelog_Approval TBD
+       fi
+   fi
 }
 
 ##----------------------------------------##
-## Modified by Martinski W. [2025-Jan-05] ##
+## Modified by Martinski W. [2025-Jan-15] ##
 ##----------------------------------------##
-_Config_FromSettings_()
+_UpdateConfigFromWebUISettings_()
 {
    [ ! -f "$SHARED_SETTINGS_FILE" ] && return 1
 
-   # Check for MerlinAU_ entries excluding 'version' & 'uiPage' #
-   if [ "$(grep "^MerlinAU_" "$SHARED_SETTINGS_FILE" | grep -vE "version|uiPage" -c)" -gt 0 ]
+   local settingsMergeOK=true  logMsgTag="with errors."
+
+   # Check for 'MerlinAU_' entries excluding 'version' #
+   if [ "$(grep "^MerlinAU_" "$SHARED_SETTINGS_FILE" | grep -v "_version" -c)" -gt 0 ]
    then
        Say "Updated settings from WebUI found, merging into $CONFIG_FILE"
        cp -a "$CONFIG_FILE" "${CONFIG_FILE}.bak"
 
-       # Extract MerlinAU_ entries excluding 'version' & 'uiPage' #
-       grep "MerlinAU_" "$SHARED_SETTINGS_FILE" | grep -Ev "version|uiPage" > "$TEMPFILE"
-       sed -i "s/MerlinAU_//g;s/ /=/g" "$TEMPFILE"
+       # Extract 'MerlinAU_' entries excluding 'version' #
+       grep "^MerlinAU_" "$SHARED_SETTINGS_FILE" | grep -v "_version" > "$TEMPFILE"
+       sed -i "s/^MerlinAU_//g;s/ /=/g" "$TEMPFILE"
 
        while IFS='' read -r line || [ -n "$line" ]
        do
            keySettingName="$(echo "$line" | cut -f1 -d'=')"
            keySettingValue="$(echo "$line" | cut -f2- -d'=')"
+
+           if [ "$keySettingName" = "FW_New_Update_ZIP_Directory_Path" ]
+           then
+               if _Validate_FW_UpdateZIP_DirectoryPath_ "$keySettingValue" true
+               then
+                   Say "Directory path [$keySettingValue] was updated successfully."
+               else
+                   settingsMergeOK=false
+                   Say "**ERROR**: Could NOT update directory path [$keySettingValue]"
+               fi
+               continue
+           fi
            Update_Custom_Settings "$keySettingName" "$keySettingValue"
        done < "$TEMPFILE"
 
-       # Extract 'MerlinAU_uiPage' separately (if found) #
-       grep '^MerlinAU_uiPage' "$SHARED_SETTINGS_FILE" > "$TEMPFILE"
-
        # Extract 'MerlinAU_version_*' separately (if found) #
-       grep '^MerlinAU_version_.*' "$SHARED_SETTINGS_FILE" >> "$TEMPFILE"
-
+       grep '^MerlinAU_version_.*' "$SHARED_SETTINGS_FILE" > "$TEMPFILE"
        # Now remove all 'MerlinAU_*' entries #
        sed -i "/^MerlinAU_.*/d" "$SHARED_SETTINGS_FILE"
 
        # Reconstruct the shared settings file #
        mv -f "$SHARED_SETTINGS_FILE" "${SHARED_SETTINGS_FILE}.bak"
        cat "${SHARED_SETTINGS_FILE}.bak" "$TEMPFILE" > "$SHARED_SETTINGS_FILE"
-
        rm -f "$TEMPFILE" "${SHARED_SETTINGS_FILE}.bak"
 
-       Say "Merge of updated settings from WebUI completed successfully"
+       _ActionsAfterNewConfigSettings_
+
+       "$settingsMergeOK" && logMsgTag="successfully."
+       Say "Merge of updated settings from WebUI was completed ${logMsgTag}"
+
+       if ! "$settingsMergeOK"
+       then  ## Reset for Next Check ##
+           { sleep 30 ; _UpdateHelperJSFile_ 0x01 "true" ; } &
+       fi
    else
-       Say "No updated settings from WebUI found, no merge into $CONFIG_FILE necessary"
+       Say "No updated settings from WebUI found. No merge into $CONFIG_FILE necessary."
    fi
    return 0
 }
@@ -7501,7 +7709,7 @@ _RunBackupmon_()
 }
 
 ##----------------------------------------##
-## Modified by Martinski W. [2024-Jan-05] ##
+## Modified by Martinski W. [2025-Jan-05] ##
 ##----------------------------------------##
 _RunOfflineUpdateNow_()
 {
@@ -7640,9 +7848,9 @@ _RunOfflineUpdateNow_()
     fi
 }
 
-##------------------------------------------##
-## Modified by ExtremeFiretop [2024-Jul-31] ##
-##------------------------------------------##
+##----------------------------------------##
+## Modified by Martinski W. [2025-Jan-15] ##
+##----------------------------------------##
 _RunFirmwareUpdateNow_()
 {
     # Double-check the directory exists before using it #
@@ -7711,9 +7919,7 @@ Please manually update to version ${GRNct}${MinSupportedFirmwareVers}${NOct} or 
         Say "Using temporary fallback directory: /home/root"
         "$inMenuMode" && { _WaitForYESorNO_ "Continue?" || return 1 ; }
         # Continue #
-        FW_ZIP_BASE_DIR="/home/root"
-        FW_ZIP_DIR="${FW_ZIP_BASE_DIR}/$FW_ZIP_SUBDIR"
-        FW_ZIP_FPATH="${FW_ZIP_DIR}/${FW_FileName}.zip"
+        _SetUp_FW_UpdateZIP_DirectoryPaths_ "/home/root"
     fi
 
     if ! node_online_status="$(_NodeActiveStatus_)"
@@ -8487,13 +8693,14 @@ _CheckForMinimumRequirements_()
 }
 
 ##-------------------------------------##
-## Added by Martinski W. [2025-Jan-05] ##
+## Added by Martinski W. [2025-Jan-15] ##
 ##-------------------------------------##
 _DoStartupInit_()
 {
    _CreateDirPaths_
    _InitCustomSettingsConfig_
    _CreateSymLinks_
+   _InitHelperJSFile_
    _SetVersionSharedSettings_ local "$SCRIPT_VERSION"
 
    if "$inRouterSWmode"
@@ -8505,7 +8712,7 @@ _DoStartupInit_()
 }
 
 ##----------------------------------------##
-## Modified by Martinski W. [2025-Jan-11] ##
+## Modified by Martinski W. [2025-Jan-15] ##
 ##----------------------------------------##
 _DoInstallation_()
 {
@@ -8516,6 +8723,7 @@ _DoInstallation_()
    _CreateDirPaths_
    _InitCustomSettingsConfig_
    _CreateSymLinks_
+   _InitHelperJSFile_
    _SetVersionSharedSettings_ local "$SCRIPT_VERSION"
    _SetVersionSharedSettings_ server "$SCRIPT_VERSION"
    _DownloadScriptFiles_ install
@@ -9445,7 +9653,7 @@ _ShowMainMenuOptions_()
 }
 
 ##----------------------------------------##
-## Modified by Martinski W. [2024-Dec-22] ##
+## Modified by Martinski W. [2025-Jan-15] ##
 ##----------------------------------------##
 _ShowAdvancedOptionsMenu_()
 {
@@ -9457,6 +9665,7 @@ _ShowAdvancedOptionsMenu_()
    printf "================== Advanced Options Menu =================\n"
    printf "${SEPstr}\n"
 
+   _SetUp_FW_UpdateZIP_DirectoryPaths_
    printf "\n  ${GRNct}1${NOct}.  Set Directory for F/W Update File"
    printf "\n${padStr}[Current Path: ${GRNct}${FW_ZIP_DIR}${NOct}]\n"
 
@@ -9710,11 +9919,12 @@ _ShowLogOptionsMenu_()
 }
 
 ##----------------------------------------##
-## Modified by Martinski W. [2024-May-04] ##
+## Modified by Martinski W. [2025-Jan-15] ##
 ##----------------------------------------##
 _AdvancedLogsOptions_()
 {
     local menuChoice=""
+    _SetUp_FW_UpdateLOG_DirectoryPaths_
 
     while true
     do
@@ -9932,7 +10142,7 @@ _MainMenu_()
 }
 
 ##-------------------------------------##
-## Added by Martinski W. [2025-Jan-06] ##
+## Added by Martinski W. [2025-Jan-15] ##
 ##-------------------------------------##
 _DoInitializationStartup_()
 {
@@ -9949,6 +10159,7 @@ _DoInitializationStartup_()
    _CreateDirPaths_
    _InitCustomSettingsConfig_
    _CreateSymLinks_
+   _InitHelperJSFile_
    _SetVersionSharedSettings_ local "$SCRIPT_VERSION"
 
    if "$inRouterSWmode"
@@ -9987,7 +10198,7 @@ then
 fi
 
 ##----------------------------------------##
-## Modified by Martinski W. [2024-Jan-11] ##
+## Modified by Martinski W. [2024-Jan-15] ##
 ##----------------------------------------##
 if [ $# -gt 0 ]
 then
@@ -10045,70 +10256,35 @@ then
        uninstall) _DoUnInstallation_
            ;;
        service_event)
-           if [ "$2" = "start" ] && [ "$3" = "MerlinAUuninstall" ]
+           if [ "$2" = "start" ] && [ "$3" = "${SCRIPT_NAME}uninstall" ]
            then
                _DoUnInstallation_
                sleep 1
-           elif [ "$2" = "start" ] && [ "$3" = "MerlinAUapprovechangelog" ] 
+           elif [ "$2" = "start" ] && [ "$3" = "${SCRIPT_NAME}approvechangelog" ] 
            then
-               local currentApprovalStatus="$(Get_Custom_Setting "FW_New_Update_Changelog_Approval")"
-               if [ "$currentApprovalStatus" = "BLOCKED" ]
+               local currApprovalStatus="$(Get_Custom_Setting "FW_New_Update_Changelog_Approval")"
+               if [ "$currApprovalStatus" = "BLOCKED" ]
                then
                    Update_Custom_Settings "FW_New_Update_Changelog_Approval" "APPROVED"
-               elif [ "$currentApprovalStatus" = "APPROVED" ]
+               elif [ "$currApprovalStatus" = "APPROVED" ]
                then
                    Update_Custom_Settings "FW_New_Update_Changelog_Approval" "BLOCKED"
                fi
-           elif [ "$2" = "start" ] && [ "$3" = "MerlinAUcheckupdate" ]
+           elif [ "$2" = "start" ] && [ "$3" = "${SCRIPT_NAME}checkupdate" ]
            then
                if _AcquireLock_ cliFileLock
                then
                    _RunFirmwareUpdateNow_
                    _ReleaseLock_ cliFileLock
                fi
-           elif [ "$2" = "start" ] && [ "$3" = "MerlinAUconfig" ]
+           elif [ "$2" = "start" ] && [ "$3" = "${SCRIPT_NAME}config" ]
            then
-               OldScriptUpdateValue="$(Get_Custom_Setting Allow_Script_Auto_Update)"
-               OldChangelogValue="$(Get_Custom_Setting CheckChangeLog)"
-               OldPostponeValue="$(Get_Custom_Setting FW_New_Update_Postponement_Days)"
-               OldEmailValue="$(Get_Custom_Setting FW_New_Update_EMail_CC_Address)"
-               _Config_FromSettings_
-               sleep 1
-               NewPostponeValue="$(Get_Custom_Setting FW_New_Update_Postponement_Days)"
-               NewScriptUpdateValue="$(Get_Custom_Setting Allow_Script_Auto_Update)"
-               currentChangelogValue="$(Get_Custom_Setting CheckChangeLog)"
-               NewEmailValue="$(Get_Custom_Setting FW_New_Update_EMail_CC_Address)"
-
-               # Compare old vs. new values and action something else #
-               if [ "$OldEmailValue" != "$NewEmailValue" ]
+               if _AcquireLock_ cliFileLock
                then
-                   NewnameAlias="${NewEmailValue%%@*}"
-                   Update_Custom_Settings FW_New_Update_EMail_CC_Name "${NewnameAlias}"
+                   _UpdateConfigFromWebUISettings_
+                   _ConfirmCronJobForFWAutoUpdates_
+                   _ReleaseLock_ cliFileLock
                fi
-               if [ "$currentChangelogValue" = "DISABLED" ] && [ "$OldChangelogValue" = "ENABLED" ];
-               then
-                   Delete_Custom_Settings "FW_New_Update_Changelog_Approval"
-               elif [ "$currentChangelogValue" = "ENABLED" ] && [ "$OldChangelogValue" = "DISABLED" ];
-               then
-                   Update_Custom_Settings FW_New_Update_Changelog_Approval TBD
-               fi
-               if [ "$NewPostponeValue" != "$OldPostponeValue" ];
-               then
-                   _Calculate_NextRunTime_
-               fi
-               if [ "$OldScriptUpdateValue" = "ENABLED" ] && [ "$NewScriptUpdateValue" = "DISABLED" ];
-               then
-                   _DelScriptAutoUpdateHook_
-                   _DelScriptAutoUpdateCronJob_
-               elif [ "$OldScriptUpdateValue" = "DISABLED" ] && [ "$NewScriptUpdateValue" = "ENABLED" ];
-               then
-                   scriptUpdateCronSched="$(_GetScriptAutoUpdateCronSchedule_)"
-                   if _ValidateCronJobSchedule_ "$scriptUpdateCronSched"
-                   then
-                       _AddScriptAutoUpdateCronJob_ && _AddScriptAutoUpdateHook_
-                   fi
-               fi
-               _ConfirmCronJobForFWAutoUpdates_
            fi
            ;;
        *) printf "${REDct}INVALID Parameter [$*].${NOct}\n"
