@@ -4,7 +4,7 @@
 #
 # Original Creation Date: 2023-Oct-01 by @ExtremeFiretop.
 # Official Co-Author: @Martinski W. - Date: 2023-Nov-01
-# Last Modified: 2025-Jan-18
+# Last Modified: 2025-Jan-20
 ###################################################################
 set -u
 
@@ -310,20 +310,28 @@ _WaitForEnterKey_()
    read -rs EnterKEY ; echo
 }
 
-##----------------------------------##
-## Added Martinski W. [2023-Nov-28] ##
-##----------------------------------##
+##-------------------------------------##
+## Modified Martinski W. [2025-Jan-20] ##
+##-------------------------------------##
 _WaitForYESorNO_()
 {
-   ! "$isInteractive" && return 0
-   local promptStr
+   local retCode  defltAnswer  promptStr
 
-   if [ $# -eq 0 ] || [ -z "$1" ]
+   if [ $# -gt 0 ] && [ "$1" = "NO" ]
+   then retCode=1 ; defltAnswer="YES"
+   else retCode=0 ; defltAnswer="NO"
+   fi
+
+   ! "$isInteractive" && return "$retCode"
+
+   if [ $# -eq 0 ] || [ -z "$1" ] || \
+      echo "$1" | grep -qE "^(YES|NO)$"
    then promptStr=" [yY|nN]?  "
    else promptStr="$1 [yY|nN]?  "
    fi
 
    printf "$promptStr" ; read -r YESorNO
+   [ -z "$YESorNO" ] && YESorNO="$defltAnswer"
    if echo "$YESorNO" | grep -qE "^([Yy](es)?|YES)$"
    then echo "OK" ; return 0
    else echo "NO" ; return 1
@@ -8745,7 +8753,7 @@ _DoInstallation_()
 }
 
 ##----------------------------------------##
-## Modified by Martinski W. [2025-Jan-18] ##
+## Modified by Martinski W. [2025-Jan-20] ##
 ##----------------------------------------##
 _DoUnInstallation_()
 {
@@ -8758,7 +8766,7 @@ _DoUnInstallation_()
    local savedCFGPath="${SCRIPTS_PATH}/${SCRIPT_NAME}_CFG.SAVED.TXT"
 
    printf "\n${BOLDct}Do you want to keep/save the $SCRIPT_NAME configuration file${NOct}"
-   if _WaitForYESorNO_
+   if _WaitForYESorNO_ NO
    then
        doSaveConfig=true
        mv -f "$CONFIG_FILE" "$savedCFGPath"
